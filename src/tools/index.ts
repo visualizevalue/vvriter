@@ -1,18 +1,21 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { registerFrameworkTools } from './frameworks.js'
-import { registerVoiceTool } from './voice.js'
-import { registerTweetTools } from './tweets.js'
-import { registerCourseTools } from './courses.js'
-import { registerVisualTools } from './visuals.js'
-import { registerProjectTools } from './projects.js'
 import { registerGenerateTools } from './generate.js'
+import { registerVoiceTool } from './voice.js'
+import { registerFrameworkTools } from './frameworks.js'
+import { registerTweetTools } from './tweets.js'
+import { registerVisualTools } from './visuals.js'
+import { registerCourseTools } from './courses.js'
+import { registerProjectTools } from './projects.js'
 
 export function registerTools(server: McpServer) {
-  registerFrameworkTools(server)
-  registerVoiceTool(server)
-  registerTweetTools(server)
-  registerCourseTools(server)
-  registerVisualTools(server)
-  registerProjectTools(server)
+  // Creation tools first — this is the product
   registerGenerateTools(server)
+
+  // Reference tools — supporting context
+  registerVoiceTool(server)
+  registerFrameworkTools(server)
+  registerTweetTools(server)
+  registerVisualTools(server)
+  registerCourseTools(server)
+  registerProjectTools(server)
 }

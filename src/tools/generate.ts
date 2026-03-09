@@ -41,6 +41,15 @@ function loadVisuals(): Visual[] {
   return visualsCache!
 }
 
+function loadDescriptions(): Record<string, string> {
+  try {
+    const raw = readFileSync(join(dataDir, 'visual-descriptions.json'), 'utf-8')
+    return JSON.parse(raw)
+  } catch {
+    return {}
+  }
+}
+
 function imageUrl(img: { id: string; cdn: string; path: string; type: string }): string {
   return `https://${img.cdn}.cdn.vv.xyz/${img.path}/${img.id}.${img.type}`
 }
@@ -56,40 +65,46 @@ function shuffleSample<T>(arr: T[], n: number): T[] {
 }
 
 export function registerGenerateTools(server: McpServer) {
-  // ─── ARTICLE GENERATION (main flow) ───────────────────────────
+  // ─────────────────────────────────────────────────────────────
+  // ARTICLE CREATION
+  //
+  // Two-step flow:
+  //   1. suggest_article() — loads raw material, AI finds the stories
+  //   2. generate_article() — AI writes the article
+  //
+  // No topic required. The archive surfaces the ideas.
+  // Every call shuffles the sample so it's never the same twice.
+  // ─────────────────────────────────────────────────────────────
 
   server.tool(
     'suggest_article',
-    `Generate article concepts from Jack Butcher's tweet archive and VV visuals. This is the core creative tool — it samples diverse tweets (top performers, mid-tier, deep cuts, and topic matches), pairs them with visual one-liners, and returns editorial context for you to suggest 3 article concepts. Each concept should include a title, angle, tweet selections, and visual pairings.`,
+    `Create article ideas on the fly. No input needed — call this and get back a randomized sample of Jack Butcher's tweet archive and VV visuals. The AI reads through the raw material, finds the interesting idea clusters, and proposes article concepts. Every call shuffles the sample so you always get fresh combinations. Optionally pass a topic to bias the mix.`,
     {
       topic: z
         .string()
         .optional()
-        .describe('Topic or direction for the article. Leave empty for "surprise me" — the tool will surface the most interesting clusters.'),
+        .describe('Optional direction to bias the sample. Usually omitted — the tool surfaces ideas you didn\'t know to look for.'),
     },
     async ({ topic }) => {
       const tweets = loadTweets()
       const visuals = loadVisuals()
       const profile = readFileSync(join(dataDir, 'writing-profile.md'), 'utf-8')
+      const descriptions = loadDescriptions()
 
-      // Build diverse tweet sample — same tiered approach as the admin flow
+      // Randomized tiered sample — different every call
       const seen = new Set<string>()
 
-      // Tier 1: Top 50 (proven, high-signal)
       const tier1 = tweets.slice(0, 50)
       tier1.forEach((t) => seen.add(t.id))
 
-      // Tier 2: Random 75 from ranks 50–500 (solid, different each run)
       const tier2 = shuffleSample(tweets.slice(50, 500), 75)
       tier2.forEach((t) => seen.add(t.id))
 
-      // Tier 3: Random 50 from ranks 500–2000 (hidden gems)
       const tier3 = shuffleSample(tweets.slice(500, 2000), 50)
       tier3.forEach((t) => seen.add(t.id))
 
       const candidateTweets = [...tier1, ...tier2, ...tier3]
 
-      // Topic matches from full archive (beyond what's already included)
       if (topic) {
         const terms = topic.toLowerCase().split(/\s+/)
         const topicMatches = tweets
@@ -106,53 +121,50 @@ export function registerGenerateTools(server: McpServer) {
       }
 
       const tweetList = candidateTweets
-        .map((t, i) => `[${i}] "${t.text}" (${t.likes} likes)`)
+        .map((t, i) => `[T${i}] "${t.text}" — ${t.likes} likes (id:${t.id})`)
         .join('\n')
 
-      // Visuals with text captions (these ARE the visual — the caption is the idea)
-      const visualsWithText = visuals.filter((v) => v.data.text).slice(0, 200)
-      const visualList = visualsWithText
-        .map((v, i) => `[${i}] "${v.data.text}" (tags: ${v.data.tags.join(', ')})`)
+      const visualsWithText = visuals.filter((v) => v.data.text)
+      const sampledVisuals = shuffleSample(visualsWithText, Math.min(150, visualsWithText.length))
+      const visualList = sampledVisuals
+        .map((v, i) => {
+          const desc = descriptions[v.id]
+          const parts = [`[V${i}] "${v.data.text}"`]
+          if (desc) parts.push(`  Context: ${desc}`)
+          if (v.data.tags.length) parts.push(`  Tags: ${v.data.tags.join(', ')}`)
+          parts.push(`  Image: ${imageUrl(v.data.image)}`)
+          parts.push(`  ID: ${v.id}`)
+          return parts.join('\n')
+        })
         .join('\n')
-
-      const topicInstruction = topic
-        ? `The user is interested in: "${topic}". Use this as a starting direction, but if you see a more interesting angle or connection, pursue it.`
-        : `No specific topic given. Find the most interesting, surprising, or powerful idea clusters in the tweets.`
 
       const parts = [
-        `# Article Suggestion Context`,
+        `# Raw Material`,
         '',
-        `## Voice & Style`,
+        `## Voice`,
         profile,
         '',
-        `## Direction`,
-        topicInstruction,
+        `## Tweets — ${candidateTweets.length} samples`,
+        `Top 50 proven performers + 75 random mid-tier + 50 random deep cuts${topic ? ` + topic matches for "${topic}"` : ''}. Different every call.`,
         '',
-        `## Tweet Archive (${candidateTweets.length} diverse samples — top performers, mid-tier, deep cuts${topic ? ', and topic matches' : ''})`,
         tweetList,
         '',
-        `## Available Visuals (${visualsWithText.length} with captions — the caption IS the visual's core idea)`,
+        `## Visuals — ${sampledVisuals.length} illustrations`,
+        `Black-and-white minimalist illustrations. The caption IS the idea. Random sample.`,
+        '',
         visualList,
         '',
-        `## Editorial Instructions`,
-        `You're an editor for Visualize Value. Find compelling article ideas hidden in this tweet archive.`,
-        '',
-        `Think like an editor:`,
-        `- Look for IDEAS that connect across tweets, not just keyword matches`,
-        `- Find non-obvious relationships — tweets that weren't written together but build on the same underlying principle`,
-        `- Prioritize standalone insights (not conversations or references to external links)`,
-        `- The best articles weave 4-8 tweets into a narrative the author didn't explicitly write but clearly believes`,
-        `- Don't default to highest-liked tweets — mix popular and lesser-known for fresh, non-obvious articles`,
-        `- Match visuals whose one-liners reinforce the core argument`,
-        '',
-        `Suggest 3 article concepts, ranging from obvious to surprising. For each:`,
-        `- A compelling, specific title (not generic — something you'd actually click)`,
-        `- A one-sentence angle: what's the thesis, and why does it matter?`,
-        `- Which tweet indices (4-8) build a narrative arc together, ordered for flow`,
-        `- Which visual indices (2-4) reinforce the ideas — pick visuals whose captions directly support the argument`,
-        `- 4-6 alternate visual indices as backups`,
-        '',
-        `Format each suggestion clearly with the tweet texts and visual captions included (not just indices) so the user can review and edit before generating.`,
+        `## Create`,
+        `Find the stories hiding in here. Connect tweets that weren't written together but share an underlying principle. Match them with visuals whose captions reinforce the argument.`,
+        ``,
+        `3 article concepts. For each:`,
+        `1. **Title** — specific, clickable`,
+        `2. **Angle** — one sentence thesis`,
+        `3. **Tweets** — 4-8 tweet texts with T-indices, ordered for narrative flow`,
+        `4. **Visuals** — 2-4 visual captions with V-indices and image URLs`,
+        `5. **Alternates** — 4-6 backup visuals`,
+        ``,
+        `Range from obvious to surprising. The best ideas connect proven insights with buried ones.`,
       ].join('\n')
 
       return { content: [{ type: 'text' as const, text: parts }] }
@@ -161,114 +173,115 @@ export function registerGenerateTools(server: McpServer) {
 
   server.tool(
     'generate_article',
-    `Generate a full article from selected tweets and visuals. Takes a title, angle, selected tweets, and visuals — returns the writing context and instructions for you to ghostwrite the article in Jack Butcher's voice. The output should use {{TWEET_N}} and {{VISUAL_N}} markers for embedding.`,
+    `Write an article from selected tweets and visuals. Pass the title, angle, and IDs from suggest_article. Returns full ghostwriting context. Output uses {{TWEET_N}} and {{VISUAL_N}} embed markers.`,
     {
       title: z.string().describe('Article title'),
-      angle: z.string().describe('One-sentence thesis / angle'),
-      tweets: z
-        .array(
-          z.object({
-            id: z.string(),
-            text: z.string(),
-            likes: z.number(),
-          })
-        )
-        .describe('Selected tweets to weave into the article (4-8)'),
-      visuals: z
-        .array(
-          z.object({
-            id: z.string(),
-            text: z.string(),
-          })
-        )
-        .describe('Selected visuals to embed (2-4)'),
+      angle: z.string().describe('One-sentence thesis'),
+      tweet_ids: z.array(z.string()).describe('Tweet IDs from suggest_article'),
+      visual_ids: z.array(z.string()).describe('Visual IDs from suggest_article'),
     },
-    async ({ title, angle, tweets, visuals }) => {
+    async ({ title, angle, tweet_ids, visual_ids }) => {
       const profile = readFileSync(join(dataDir, 'writing-profile.md'), 'utf-8')
+      const allTweets = loadTweets()
+      const allVisuals = loadVisuals()
+      const descriptions = loadDescriptions()
 
-      const tweetBlock = tweets
+      const tweetMap = new Map(allTweets.map((t) => [t.id, t]))
+      const visualMap = new Map(allVisuals.map((v) => [v.id, v]))
+
+      const selectedTweets = tweet_ids.map((id) => tweetMap.get(id)).filter(Boolean) as Tweet[]
+      const selectedVisuals = visual_ids.map((id) => visualMap.get(id)).filter(Boolean) as Visual[]
+
+      const tweetBlock = selectedTweets
         .map((t, i) => `[TWEET_${i + 1}] "${t.text}" (${t.likes.toLocaleString()} likes, id: ${t.id})`)
         .join('\n')
 
-      const visualBlock = visuals
-        .map((v, i) => `[VISUAL_${i + 1}] "${v.text}" (id: ${v.id})`)
+      const visualBlock = selectedVisuals
+        .map((v, i) => {
+          const desc = descriptions[v.id]
+          return [
+            `[VISUAL_${i + 1}] "${v.data.text || '(no text)'}"`,
+            desc ? `  Context: ${desc}` : null,
+            `  Image: ${imageUrl(v.data.image)}`,
+            `  ID: ${v.id}`,
+          ].filter(Boolean).join('\n')
+        })
         .join('\n')
 
       const parts = [
-        `# Ghostwrite: "${title}"`,
+        `# Write: "${title}"`,
         '',
-        `## Voice & Style (match this exactly)`,
+        `## Voice (match exactly)`,
         profile,
         '',
-        `## Article Details`,
         `**Title:** ${title}`,
         `**Angle:** ${angle}`,
         '',
-        `## Tweets to weave in`,
+        `## Tweets`,
         tweetBlock,
         '',
-        `## Visuals to embed`,
+        `## Visuals`,
         visualBlock,
         '',
-        `## Writing Instructions`,
-        `1. Match Jack's voice — short paragraphs, no fluff, no transition words, no hedging`,
-        `2. Open with the idea, not a preamble`,
-        `3. Embed tweets using {{TWEET_N}} markers — use at least 2-3, placed where they hit hardest`,
-        `4. Place visuals using {{VISUAL_N}} markers — use to reinforce points, not decorate`,
-        `5. End sharp — no summary paragraph`,
-        `6. 500-1000 words`,
-        `7. Title is already decided, just write the body`,
-        '',
-        `Write the article body as HTML (<p> tags, clean markup). Include the {{TWEET_N}} and {{VISUAL_N}} markers inline where they should appear.`,
+        `## Instructions`,
+        `- Short paragraphs, no fluff, no transition words, no hedging`,
+        `- Open with the idea, not a preamble`,
+        `- Embed tweets with {{TWEET_N}} markers — place where they hit hardest`,
+        `- Embed visuals with {{VISUAL_N}} markers — reinforce points, don't decorate`,
+        `- End sharp — no summary`,
+        `- 500-1000 words, HTML (<p> tags)`,
       ].join('\n')
 
       return { content: [{ type: 'text' as const, text: parts }] }
     }
   )
 
-  // ─── TWEET DRAFTING ───────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────
+  // TWEET CREATION
+  // ─────────────────────────────────────────────────────────────
 
   server.tool(
     'draft_tweet',
-    'Get context for drafting a tweet in the VV voice. Returns the writing profile rules, top-performing tweets on the topic, and structural patterns to follow.',
+    `Draft tweets in the VV voice. No input needed — call this and get back the writing profile, reference tweets, and instructions. Pass a topic to focus the drafts, or leave empty to riff on whatever the top performers suggest.`,
     {
-      topic: z.string().describe('The topic or idea to tweet about'),
+      topic: z.string().optional().describe('Optional topic or idea. Leave empty to riff freely.'),
       style: z
         .enum(['observation', 'contrast', 'reframe', 'list', 'question', 'one-liner'])
         .optional()
-        .describe('Preferred rhetorical style (optional)'),
+        .describe('Optional rhetorical style'),
     },
     async ({ topic, style }) => {
       const tweets = loadTweets()
       const profile = readFileSync(join(dataDir, 'writing-profile.md'), 'utf-8')
 
-      const q = topic.toLowerCase()
-      const topicTweets = tweets
-        .filter((t) => t.text.toLowerCase().includes(q) && t.likes >= 50)
-        .sort((a, b) => b.likes - a.likes)
-        .slice(0, 10)
+      let topicTweets: Tweet[] = []
+      if (topic) {
+        const q = topic.toLowerCase()
+        topicTweets = tweets
+          .filter((t) => t.text.toLowerCase().includes(q) && t.likes >= 50)
+          .sort((a, b) => b.likes - a.likes)
+          .slice(0, 10)
+      }
 
-      const topPerformers = [...tweets]
-        .sort((a, b) => b.likes - a.likes)
-        .slice(0, 15)
+      // Random mix of top performers — different every call
+      const topPerformers = shuffleSample(tweets.slice(0, 100), 15)
 
       const parts = [
-        `# Draft context for: "${topic}"`,
-        style ? `Requested style: ${style}` : null,
+        topic ? `# Drafts for: "${topic}"` : `# Tweet Drafts`,
+        style ? `Style: ${style}` : null,
         '',
-        '## Writing rules (follow these exactly)',
+        '## Voice (follow exactly)',
         profile,
         '',
         topicTweets.length > 0
-          ? `## Top tweets on "${topic}" (${topicTweets.length} found)\n\n${topicTweets.map((t) => `"${t.text}" (${t.likes.toLocaleString()} likes)`).join('\n\n')}`
-          : `## No existing tweets found on "${topic}" — use the top performers below for structural reference`,
+          ? `## Reference tweets on "${topic}"\n\n${topicTweets.map((t) => `"${t.text}" (${t.likes.toLocaleString()} likes)`).join('\n\n')}`
+          : null,
         '',
-        `## Top 15 performers (structural reference)\n\n${topPerformers.map((t) => `"${t.text}" (${t.likes.toLocaleString()} likes)`).join('\n\n')}`,
+        `## Top performers (structural reference)\n\n${topPerformers.map((t) => `"${t.text}" (${t.likes.toLocaleString()} likes)`).join('\n\n')}`,
         '',
-        '## Instructions',
-        'Using the writing profile rules and reference tweets above, draft 5 tweet options.',
-        'Each should be under 15 words. No hedging. No em dashes. Land on a noun.',
-        'Vary the rhetorical pattern across the 5 options (contrast, reframe, paradox, conditional, declaration).',
+        '## Create',
+        'Draft 5 tweets. Under 15 words each. No hedging. No em dashes. Land on a noun.',
+        'Vary the pattern: contrast, reframe, paradox, conditional, declaration.',
       ]
         .filter((p) => p !== null)
         .join('\n')
@@ -277,7 +290,59 @@ export function registerGenerateTools(server: McpServer) {
     }
   )
 
-  // ─── FRAMEWORK APPLICATION ────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────
+  // VISUAL IDEAS
+  // ─────────────────────────────────────────────────────────────
+
+  server.tool(
+    'visual_ideas',
+    `Generate concepts for new VV-style visuals. Returns a random sample of existing visuals as reference alongside the writing profile, so the AI can propose new illustration concepts (one-liner + visual description). No input needed.`,
+    {
+      theme: z.string().optional().describe('Optional theme or direction. Leave empty for open exploration.'),
+    },
+    async ({ theme }) => {
+      const visuals = loadVisuals()
+      const profile = readFileSync(join(dataDir, 'writing-profile.md'), 'utf-8')
+      const descriptions = loadDescriptions()
+
+      // Random sample of existing visuals as reference
+      const visualsWithText = visuals.filter((v) => v.data.text)
+      const sample = shuffleSample(visualsWithText, 30)
+
+      const visualRef = sample
+        .map((v) => {
+          const desc = descriptions[v.id]
+          return `"${v.data.text}"${desc ? ` — ${desc}` : ''}`
+        })
+        .join('\n')
+
+      const parts = [
+        theme ? `# Visual Ideas: "${theme}"` : `# Visual Ideas`,
+        '',
+        `## VV Visual Style`,
+        `Black and white. Minimal. Typographic or symbolic. One idea per image. The text caption IS the visual — it communicates the core concept the illustration makes tangible.`,
+        '',
+        `## Voice`,
+        profile,
+        '',
+        `## Reference Visuals (${sample.length} random samples)`,
+        visualRef,
+        '',
+        `## Create`,
+        `Generate 8 new visual concepts. For each:`,
+        `1. **One-liner** — the text that appears on/with the visual (under 15 words)`,
+        `2. **Visual description** — how to illustrate it (what the image shows, the contrast or metaphor it uses)`,
+        ``,
+        `The best VV visuals take an abstract idea and make it concrete through a simple visual metaphor. Think: subtraction, contrast, before/after, part/whole.`,
+      ].join('\n')
+
+      return { content: [{ type: 'text' as const, text: parts }] }
+    }
+  )
+
+  // ─────────────────────────────────────────────────────────────
+  // FRAMEWORK APPLICATION
+  // ─────────────────────────────────────────────────────────────
 
   server.tool(
     'apply_framework',
@@ -308,68 +373,12 @@ export function registerGenerateTools(server: McpServer) {
         situation,
         '',
         '## Instructions',
-        'Walk through each stage/step of the framework above and explain where this situation currently sits.',
+        'Walk through each stage/step of the framework and explain where this situation currently sits.',
         'Identify the specific next move. Be concrete and actionable.',
         'Use the VV voice: direct, declarative, no hedging. Short paragraphs.',
       ].join('\n')
 
       return { content: [{ type: 'text' as const, text: prompt }] }
-    }
-  )
-
-  // ─── VISUAL SUGGESTION ────────────────────────────────────────
-
-  server.tool(
-    'suggest_visual',
-    'Given a concept or quote, find related VV visuals and suggest a visual approach. Uses local visual index for instant results.',
-    {
-      concept: z.string().describe('The concept, quote, or idea to visualize'),
-    },
-    async ({ concept }) => {
-      const visuals = loadVisuals()
-      let descriptions: Record<string, string> = {}
-      try {
-        const raw = readFileSync(join(dataDir, 'visual-descriptions.json'), 'utf-8')
-        descriptions = JSON.parse(raw)
-      } catch {}
-
-      const q = concept.toLowerCase()
-      const matches = visuals
-        .filter((v) => {
-          const text = v.data.text?.toLowerCase() ?? ''
-          const tags = v.data.tags?.join(' ').toLowerCase() ?? ''
-          const desc = descriptions[v.id]?.toLowerCase() ?? ''
-          return text.includes(q) || tags.includes(q) || desc.includes(q)
-        })
-        .slice(0, 5)
-
-      const formatted = matches.map((v) => {
-        const desc = descriptions[v.id] || null
-        return [
-          v.data.text ? `"${v.data.text}"` : '(no text)',
-          desc ? `Context: ${desc}` : null,
-          `Image: ${imageUrl(v.data.image)}`,
-          v.data.tags?.length ? `Tags: ${v.data.tags.join(', ')}` : null,
-        ]
-          .filter(Boolean)
-          .join('\n')
-      })
-
-      const parts = [
-        `# Visual suggestions for: "${concept}"`,
-        '',
-        matches.length > 0
-          ? `## ${matches.length} related visuals found\n\n${formatted.join('\n\n---\n\n')}`
-          : '## No direct matches found',
-        '',
-        '## Approach suggestions',
-        'Based on the VV visual style (black and white, minimal, typographic, symbolic):',
-        '- What contrast or tension exists in this concept?',
-        '- Can it be reduced to two opposing words or images?',
-        '- What is the simplest possible visual representation?',
-      ].join('\n')
-
-      return { content: [{ type: 'text' as const, text: parts }] }
     }
   )
 }

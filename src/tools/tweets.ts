@@ -39,7 +39,6 @@ function expandQuery(query: string): string[] {
   const q = query.toLowerCase()
   const terms = [q]
 
-  // Check if query matches a topic group
   for (const [topic, synonyms] of Object.entries(TOPIC_SYNONYMS)) {
     if (q.includes(topic) || synonyms.some((s) => q.includes(s))) {
       terms.push(...synonyms)
@@ -52,16 +51,15 @@ function expandQuery(query: string): string[] {
 export function registerTweetTools(server: McpServer) {
   server.tool(
     'search_tweets',
-    "Search Jack Butcher's tweet archive by keyword. Expands search with related terms for broader topic matching. Returns tweets sorted by likes.",
+    "Search Jack Butcher's tweet archive by keyword. Returns matching tweets sorted by likes. Use this to find specific tweets for reference — for creating content, use draft_tweet or suggest_article instead.",
     {
       query: z.string().describe('Search term to match against tweet text'),
       min_likes: z.number().optional().describe('Minimum likes threshold (default: 0)'),
       limit: z.number().optional().describe('Max results to return (default: 20)'),
-      exact: z.boolean().optional().describe('If true, only match exact query (no topic expansion). Default: false'),
     },
-    async ({ query, min_likes = 0, limit = 20, exact = false }) => {
+    async ({ query, min_likes = 0, limit = 20 }) => {
       const tweets = loadTweets()
-      const terms = exact ? [query.toLowerCase()] : expandQuery(query)
+      const terms = expandQuery(query)
 
       const matches = tweets
         .filter((t) => {
@@ -77,17 +75,15 @@ export function registerTweetTools(server: McpServer) {
         }
       }
 
-      const expanded = exact ? '' : ` (expanded terms: ${terms.slice(1).join(', ')})`
-
       const formatted = matches
-        .map((t) => `"${t.text}"\n  ${t.likes.toLocaleString()} likes, ${t.rts.toLocaleString()} RTs (${t.date})`)
+        .map((t) => `"${t.text}"\n  ${t.likes.toLocaleString()} likes (${t.date}, id:${t.id})`)
         .join('\n\n')
 
       return {
         content: [
           {
             type: 'text' as const,
-            text: `Found ${matches.length} tweets matching "${query}"${expanded}:\n\n${formatted}`,
+            text: `Found ${matches.length} tweets matching "${query}":\n\n${formatted}`,
           },
         ],
       }
@@ -96,7 +92,7 @@ export function registerTweetTools(server: McpServer) {
 
   server.tool(
     'top_tweets',
-    "Get Jack Butcher's top-performing tweets by likes. Great for understanding what resonates most.",
+    "Get Jack Butcher's top-performing tweets by likes.",
     {
       limit: z.number().optional().describe('Number of tweets to return (default: 25)'),
     },
@@ -107,63 +103,13 @@ export function registerTweetTools(server: McpServer) {
       const formatted = top
         .map(
           (t, i) =>
-            `${i + 1}. "${t.text}"\n   ${t.likes.toLocaleString()} likes, ${t.rts.toLocaleString()} RTs`
+            `${i + 1}. "${t.text}"\n   ${t.likes.toLocaleString()} likes (id:${t.id})`
         )
         .join('\n\n')
 
       return {
         content: [{ type: 'text' as const, text: `Top ${limit} tweets:\n\n${formatted}` }],
       }
-    }
-  )
-
-  server.tool(
-    'tweet_stats',
-    'Get aggregate stats about the tweet archive — total tweets, engagement distribution, best-performing topics.',
-    {},
-    async () => {
-      const tweets = loadTweets()
-      const total = tweets.length
-      const totalLikes = tweets.reduce((s, t) => s + t.likes, 0)
-      const sorted = [...tweets].sort((a, b) => b.likes - a.likes)
-
-      // Word frequency in top 200 tweets
-      const topTweets = sorted.slice(0, 200)
-      const wordFreq: Record<string, number> = {}
-      const stopWords = new Set(['the', 'a', 'an', 'is', 'it', 'to', 'of', 'in', 'and', 'or', 'for', 'on', 'at', 'by', 'if', 'you', 'your', 'that', 'this', 'be', 'are', 'was', 'not', 'but', 'do', 'can', 'will', 'from', 'with', 'as', 'have', 'has', 'than', 'more', 'its', 'all', 'no', 'so', 'what', 'when', 'who', 'how', 'just', 'get', 'got', 'about', 'them', 'they', 'their', 'out', 'up', 'one', 'every', 'most', 'dont', "don't", 'into'])
-      for (const t of topTweets) {
-        const words = t.text.toLowerCase().replace(/[^a-z\s]/g, '').split(/\s+/)
-        for (const w of words) {
-          if (w.length > 2 && !stopWords.has(w)) {
-            wordFreq[w] = (wordFreq[w] || 0) + 1
-          }
-        }
-      }
-      const topWords = Object.entries(wordFreq)
-        .sort(([, a], [, b]) => b - a)
-        .slice(0, 20)
-        .map(([word, count]) => `${word} (${count})`)
-        .join(', ')
-
-      const stats = [
-        `# Tweet Archive Stats`,
-        '',
-        `**Total tweets:** ${total.toLocaleString()}`,
-        `**Total likes:** ${totalLikes.toLocaleString()}`,
-        `**Average likes:** ${Math.round(totalLikes / total).toLocaleString()}`,
-        `**Top tweet:** "${sorted[0].text}" (${sorted[0].likes.toLocaleString()} likes)`,
-        '',
-        `**Engagement tiers:**`,
-        `- 10,000+ likes: ${sorted.filter((t) => t.likes >= 10000).length} tweets`,
-        `- 1,000+ likes: ${sorted.filter((t) => t.likes >= 1000).length} tweets`,
-        `- 500+ likes: ${sorted.filter((t) => t.likes >= 500).length} tweets`,
-        `- 100+ likes: ${sorted.filter((t) => t.likes >= 100).length} tweets`,
-        '',
-        `**Most common words in top 200 tweets:**`,
-        topWords,
-      ].join('\n')
-
-      return { content: [{ type: 'text' as const, text: stats }] }
     }
   )
 }

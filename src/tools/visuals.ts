@@ -4,8 +4,6 @@ import { readFileSync } from 'fs'
 import { join } from 'path'
 import { dataDir } from '../paths.js'
 
-const VV_API = 'https://api.vv.xyz'
-
 type VVImage = {
   id: string
   cdn: string
@@ -17,15 +15,23 @@ type VVVisual = {
   id: string
   schema: string
   data: {
-    text?: string
-    source?: string
+    text: string | null
+    source: string | null
     image: VVImage
-    tags?: string[]
+    tags: string[]
   }
   publishedAt: string
 }
 
+let visualsCache: VVVisual[] | null = null
 let descriptionsCache: Record<string, string> | null = null
+
+function loadVisuals(): VVVisual[] {
+  if (visualsCache) return visualsCache
+  const raw = readFileSync(join(dataDir, 'visual-index.json'), 'utf-8')
+  visualsCache = JSON.parse(raw)
+  return visualsCache!
+}
 
 function loadDescriptions(): Record<string, string> {
   if (descriptionsCache) return descriptionsCache
@@ -62,7 +68,7 @@ export function registerVisualTools(server: McpServer) {
     async () => {
       const descriptions = loadDescriptions()
       try {
-        const res = await fetch(`${VV_API}/visuals/daily`)
+        const res = await fetch('https://api.vv.xyz/visuals/daily')
         if (!res.ok) throw new Error(`API returned ${res.status}`)
         const data = await res.json()
         const visual = data.post as VVVisual
@@ -85,49 +91,41 @@ export function registerVisualTools(server: McpServer) {
 
   server.tool(
     'search_visuals',
-    'Search VV visuals by text content, tags, or source. Returns matching visuals with image URLs and context descriptions.',
+    'Search VV visuals by text content, tags, source, or description. Uses local index for instant results.',
     {
       query: z.string().describe('Search term to match against visual text, tags, and descriptions'),
       limit: z.number().optional().describe('Max results (default: 10)'),
     },
     async ({ query, limit = 10 }) => {
+      const visuals = loadVisuals()
       const descriptions = loadDescriptions()
-      try {
-        const res = await fetch(`${VV_API}/visuals/all`)
-        if (!res.ok) throw new Error(`API returned ${res.status}`)
-        const visuals: VVVisual[] = await res.json()
 
-        const q = query.toLowerCase()
-        const matches = visuals
-          .filter((v) => {
-            const text = v.data.text?.toLowerCase() ?? ''
-            const tags = v.data.tags?.join(' ').toLowerCase() ?? ''
-            const source = v.data.source?.toLowerCase() ?? ''
-            const desc = descriptions[v.id]?.toLowerCase() ?? ''
-            return text.includes(q) || tags.includes(q) || source.includes(q) || desc.includes(q)
-          })
-          .slice(0, limit)
+      const q = query.toLowerCase()
+      const matches = visuals
+        .filter((v) => {
+          const text = v.data.text?.toLowerCase() ?? ''
+          const tags = v.data.tags?.join(' ').toLowerCase() ?? ''
+          const source = v.data.source?.toLowerCase() ?? ''
+          const desc = descriptions[v.id]?.toLowerCase() ?? ''
+          return text.includes(q) || tags.includes(q) || source.includes(q) || desc.includes(q)
+        })
+        .slice(0, limit)
 
-        if (matches.length === 0) {
-          return {
-            content: [{ type: 'text' as const, text: `No visuals found matching "${query}".` }],
-          }
-        }
-
-        const formatted = matches.map((v) => formatVisual(v, descriptions)).join('\n\n---\n\n')
-
+      if (matches.length === 0) {
         return {
-          content: [
-            {
-              type: 'text' as const,
-              text: `Found ${matches.length} visuals matching "${query}":\n\n${formatted}`,
-            },
-          ],
+          content: [{ type: 'text' as const, text: `No visuals found matching "${query}".` }],
         }
-      } catch (e) {
-        return {
-          content: [{ type: 'text' as const, text: `Failed to search visuals: ${e}` }],
-        }
+      }
+
+      const formatted = matches.map((v) => formatVisual(v, descriptions)).join('\n\n---\n\n')
+
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Found ${matches.length} visuals matching "${query}":\n\n${formatted}`,
+          },
+        ],
       }
     }
   )
@@ -139,24 +137,23 @@ export function registerVisualTools(server: McpServer) {
       id: z.string().describe('Visual ID'),
     },
     async ({ id }) => {
+      const visuals = loadVisuals()
       const descriptions = loadDescriptions()
-      try {
-        const res = await fetch(`${VV_API}/visuals/${id}`)
-        if (!res.ok) throw new Error(`API returned ${res.status}`)
-        const visual: VVVisual = await res.json()
+      const visual = visuals.find((v) => v.id === id)
 
+      if (!visual) {
         return {
-          content: [
-            {
-              type: 'text' as const,
-              text: `VV Visual ${id}:\n\n${formatVisual(visual, descriptions)}\nPublished: ${visual.publishedAt}`,
-            },
-          ],
+          content: [{ type: 'text' as const, text: `Visual "${id}" not found in local index.` }],
         }
-      } catch (e) {
-        return {
-          content: [{ type: 'text' as const, text: `Failed to fetch visual: ${e}` }],
-        }
+      }
+
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `VV Visual ${id}:\n\n${formatVisual(visual, descriptions)}\nPublished: ${visual.publishedAt}`,
+          },
+        ],
       }
     }
   )

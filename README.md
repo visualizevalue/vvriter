@@ -1,12 +1,10 @@
 # vvriter
 
-Content creation engine for [Visualize Value](https://visualizevalue.com). An MCP server that generates articles from Jack Butcher's tweet archive and visual library.
-
-No searching. No setup. Connect it and say "write me an article."
+MCP server that generates articles from 50,000 tweets and 400 visual artworks. One command. Three article concepts. Pick a number.
 
 ## Why
 
-AI is writing articles about our ideas whether we participate or not. So we built the source material — 50,000 tweets, 400 visuals, and an exact writing profile — into a tool anyone can plug into their AI agent. The output sounds like us because it's built from us.
+AI is writing articles about our ideas whether we participate or not. So we built the source material — 50,000 tweets, 400 visuals, and an exact [writing profile](https://github.com/visualizevalue/jackbutcher.md) — into a tool anyone can plug into their AI agent.
 
 ## Install
 
@@ -20,9 +18,9 @@ npx vvriter
 claude mcp add vvriter -- npx vvriter
 ```
 
-### Claude Desktop
+### Claude Desktop / Cursor / Windsurf
 
-Add to `claude_desktop_config.json`:
+Add to your MCP config:
 
 ```json
 {
@@ -37,23 +35,30 @@ Add to `claude_desktop_config.json`:
 
 ## How it works
 
-One command: `vvriter`
-
 1. Call `vvriter` with no arguments
 2. Pick from 3 article concepts
 3. Article saves to `~/vvriter/` and opens in your browser
 
-The tool loads a randomized sample of ~250 tweets (top performers, mid-tier, deep cuts) alongside ~150 VV visuals. The AI finds the interesting idea clusters. Every call shuffles the sample — you never get the same suggestions twice.
+The tool loads a randomized sample of tweets and visuals. The AI finds idea clusters. Every call shuffles — you never get the same suggestions twice.
 
-You don't need to know what to look for. The archive surfaces the ideas.
+## How it was built
 
-## Learn more
+Full technical breakdown: [How to Build an MCP Server for AI-Powered Content Generation](https://visualizevalue.com/workflows/how-vvriter-works)
 
-[visualizevalue.com/vvriter](https://visualizevalue.com/vvriter)
+## Related
 
-## Built by
+- [jackbutcher.md](https://github.com/visualizevalue/jackbutcher.md) — the writing profile that powers the voice
+- [How the writing profile was made](https://visualizevalue.com/workflows/how-jackbutcher-md-was-made)
 
-[Visualize Value](https://visualizevalue.com) · [Jack Butcher](https://x.com/jackbutcher)
+## About Visualize Value
+
+Art, courses, and tools by [Jack Butcher](https://visualizevalue.com/about/jack-butcher). 5 courses, 168 lessons, 55,000+ students, 607 five-star reviews.
+
+- [Courses](https://visualizevalue.com/learn) — leverage, value creation, building independently
+- [Workflows](https://visualizevalue.com/workflows) — how things get built with AI
+- [Art](https://visualizevalue.com/art) — Checks ($250M+), Opepen, Self Checkout
+- [Visuals](https://visualizevalue.com/visuals) — 600+ visual artworks
+- [The $99 MBA](https://visualizevalue.com/mba) — all 5 courses for $99/year
 
 ## License
 
